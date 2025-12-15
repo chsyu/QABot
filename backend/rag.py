@@ -157,25 +157,65 @@ def process_and_store_document(content: str):
     try:
         embeddings = get_embeddings()
         
-        # 創建向量庫並確保所有文件都有正確的權限
-        vectorstore = Chroma.from_texts(
-            texts=texts,
-            embedding=embeddings,
-            persist_directory=CHROMA_PERSIST_DIR,
-            collection_name=COLLECTION_NAME
-        )
-        
-        # 確保所有創建的文件都有寫入權限
-        try:
+        # 確保目錄完全乾淨且有寫入權限
+        if os.path.exists(CHROMA_PERSIST_DIR):
             import stat
-            if os.path.exists(CHROMA_PERSIST_DIR):
-                for root, dirs, files in os.walk(CHROMA_PERSIST_DIR):
-                    for d in dirs:
-                        os.chmod(os.path.join(root, d), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-                    for f in files:
-                        os.chmod(os.path.join(root, f), stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH)
+            def remove_readonly(func, path, exc):
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            try:
+                shutil.rmtree(CHROMA_PERSIST_DIR, onerror=remove_readonly)
+                ensure_chroma_directory()
+            except Exception as e:
+                print(f"清理目錄時發生錯誤：{e}")
+        
+        # 設置 umask 確保創建的文件有正確的權限
+        import stat
+        old_umask = os.umask(0o000)  # 允許所有權限
+        
+        try:
+            # 創建向量庫
+            vectorstore = Chroma.from_texts(
+                texts=texts,
+                embedding=embeddings,
+                persist_directory=CHROMA_PERSIST_DIR,
+                collection_name=COLLECTION_NAME
+            )
+        finally:
+            # 恢復原來的 umask
+            os.umask(old_umask)
+        
+        # 立即修復所有創建的文件權限（在 ChromaDB 創建後立即執行）
+        import stat
+        import time
+        # 等待一下確保所有文件都已創建
+        time.sleep(0.1)
+        
+        if os.path.exists(CHROMA_PERSIST_DIR):
+            for root, dirs, files in os.walk(CHROMA_PERSIST_DIR):
+                for d in dirs:
+                    dir_path = os.path.join(root, d)
+                    try:
+                        os.chmod(dir_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                    except Exception as e:
+                        print(f"設置目錄 {dir_path} 權限時發生錯誤：{e}")
+                for f in files:
+                    file_path = os.path.join(root, f)
+                    try:
+                        # 設置完整的讀寫權限
+                        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH)
+                    except Exception as e:
+                        print(f"設置文件 {file_path} 權限時發生錯誤：{e}")
+        
+        # 重新載入向量庫以確保權限生效
+        try:
+            vectorstore = Chroma(
+                persist_directory=CHROMA_PERSIST_DIR,
+                embedding_function=embeddings,
+                collection_name=COLLECTION_NAME
+            )
         except Exception as e:
-            print(f"設置文件權限時發生錯誤（可能仍正常）：{e}")
+            print(f"重新載入向量庫時發生錯誤（可能仍正常）：{e}")
         
         # 確保持久化（如果方法存在）
         try:
@@ -211,14 +251,44 @@ def process_and_store_document(content: str):
                 
                 ensure_chroma_directory()
                 
-                # 重試一次
+                # 重試一次，使用 umask 確保文件創建時就有正確權限
                 print("重試儲存到向量庫...")
-                vectorstore = Chroma.from_texts(
-                    texts=texts,
-                    embedding=embeddings,
+                import stat
+                old_umask = os.umask(0o000)  # 允許所有權限
+                
+                try:
+                    vectorstore = Chroma.from_texts(
+                        texts=texts,
+                        embedding=embeddings,
+                        persist_directory=CHROMA_PERSIST_DIR,
+                        collection_name=COLLECTION_NAME
+                    )
+                finally:
+                    os.umask(old_umask)
+                
+                # 再次修復權限
+                import time
+                time.sleep(0.1)
+                if os.path.exists(CHROMA_PERSIST_DIR):
+                    for root, dirs, files in os.walk(CHROMA_PERSIST_DIR):
+                        for d in dirs:
+                            try:
+                                os.chmod(os.path.join(root, d), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                            except:
+                                pass
+                        for f in files:
+                            try:
+                                os.chmod(os.path.join(root, f), stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH)
+                            except:
+                                pass
+                
+                # 重新載入
+                vectorstore = Chroma(
                     persist_directory=CHROMA_PERSIST_DIR,
+                    embedding_function=embeddings,
                     collection_name=COLLECTION_NAME
                 )
+                
                 print(f"重試成功：儲存 {len(texts)} 個文本塊到向量庫")
                 return
             except Exception as e2:
