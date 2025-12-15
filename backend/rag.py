@@ -57,50 +57,43 @@ text_splitter = RecursiveCharacterTextSplitter(
 vectorstore = None
 
 def initialize_vectorstore():
-    """初始化或載入向量庫"""
+    """初始化或載入向量庫（懶加載，只在需要時載入）"""
     global vectorstore
     
-    # 確保目錄存在且有正確的權限
-    ensure_chroma_directory()
-    
-    embeddings = get_embeddings()
-    
-    try:
-        if os.path.exists(CHROMA_PERSIST_DIR):
-            # 載入現有向量庫
-            vectorstore = Chroma(
-                persist_directory=CHROMA_PERSIST_DIR,
-                embedding_function=embeddings,
-                collection_name=COLLECTION_NAME
-            )
-        else:
-            # 創建新的向量庫（空）
-            vectorstore = Chroma(
-                persist_directory=CHROMA_PERSIST_DIR,
-                embedding_function=embeddings,
-                collection_name=COLLECTION_NAME
-            )
-    except Exception as e:
-        print(f"初始化向量庫時發生錯誤：{e}")
-        # 如果載入失敗，嘗試重新創建
-        if os.path.exists(CHROMA_PERSIST_DIR):
-            try:
-                shutil.rmtree(CHROMA_PERSIST_DIR)
+    # 懶加載：只有在目錄已存在且有文件時才載入
+    # 如果目錄不存在或為空，不創建空向量庫，等真正有數據時再創建
+    if os.path.exists(CHROMA_PERSIST_DIR):
+        # 檢查目錄是否有內容
+        try:
+            files = os.listdir(CHROMA_PERSIST_DIR)
+            if files:  # 如果有文件，嘗試載入
                 ensure_chroma_directory()
-            except Exception as e2:
-                print(f"清理目錄時發生錯誤：{e2}")
-        
-        vectorstore = Chroma(
-            persist_directory=CHROMA_PERSIST_DIR,
-            embedding_function=embeddings,
-            collection_name=COLLECTION_NAME
-        )
+                embeddings = get_embeddings()
+                try:
+                    vectorstore = Chroma(
+                        persist_directory=CHROMA_PERSIST_DIR,
+                        embedding_function=embeddings,
+                        collection_name=COLLECTION_NAME
+                    )
+                    return vectorstore
+                except Exception as e:
+                    print(f"載入現有向量庫時發生錯誤：{e}")
+                    # 如果載入失敗，清除並重新創建
+                    if os.path.exists(CHROMA_PERSIST_DIR):
+                        shutil.rmtree(CHROMA_PERSIST_DIR)
+        except Exception as e:
+            print(f"檢查向量庫目錄時發生錯誤：{e}")
     
+    # 如果目錄不存在或為空，不創建空向量庫
+    vectorstore = None
     return vectorstore
 
 def clear_vectorstore():
     """清空向量庫"""
     global vectorstore
+    
+    # 關閉現有的向量庫連接
+    vectorstore = None
     
     # 如果目錄存在，刪除整個目錄及其所有內容
     if os.path.exists(CHROMA_PERSIST_DIR):
@@ -127,13 +120,7 @@ def clear_vectorstore():
     # 確保目錄存在且有正確的權限
     ensure_chroma_directory()
     
-    # 重新初始化（創建空的向量庫）
-    embeddings = get_embeddings()
-    vectorstore = Chroma(
-        persist_directory=CHROMA_PERSIST_DIR,
-        embedding_function=embeddings,
-        collection_name=COLLECTION_NAME
-    )
+    # 不要在這裡創建空的向量庫，讓 from_texts 來創建
 
 def process_and_store_document(content: str):
     """處理並儲存文件到向量庫"""

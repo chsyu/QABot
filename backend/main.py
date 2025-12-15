@@ -33,8 +33,8 @@ app.add_middleware(
 # 初始化資料庫
 init_db()
 
-# 初始化向量庫
-initialize_vectorstore()
+# 不在此處初始化向量庫，改為懶加載（在需要時才載入）
+# initialize_vectorstore()
 
 # 全局變數存儲當前 session_id
 current_session_id = str(uuid.uuid4())
