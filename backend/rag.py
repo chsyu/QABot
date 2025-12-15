@@ -4,6 +4,10 @@ import os
 # 禁用 ChromaDB telemetry（在導入 ChromaDB 之前設置）
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 os.environ["CHROMA_SERVER_NOFILE"] = "0"
+# 嘗試禁用所有 telemetry
+os.environ["CHROMA_TELEMETRY_ENABLED"] = "False"
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message=".*telemetry.*")
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -98,18 +102,32 @@ def clear_vectorstore():
     """清空向量庫"""
     global vectorstore
     
-    # 如果目錄存在，刪除整個目錄
+    # 如果目錄存在，刪除整個目錄及其所有內容
     if os.path.exists(CHROMA_PERSIST_DIR):
         try:
-            shutil.rmtree(CHROMA_PERSIST_DIR)
+            # 確保可以刪除所有文件（包括可能只讀的文件）
+            import stat
+            def remove_readonly(func, path, exc):
+                """移除只讀文件"""
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            
+            shutil.rmtree(CHROMA_PERSIST_DIR, onerror=remove_readonly)
             print(f"已清除向量庫目錄：{CHROMA_PERSIST_DIR}")
         except Exception as e:
             print(f"清除向量庫時發生錯誤：{e}")
+            # 如果刪除失敗，嘗試強制刪除
+            try:
+                import subprocess
+                subprocess.run(['rm', '-rf', CHROMA_PERSIST_DIR], check=True)
+                print(f"使用系統命令強制清除目錄")
+            except:
+                pass
     
     # 確保目錄存在且有正確的權限
     ensure_chroma_directory()
     
-    # 重新初始化
+    # 重新初始化（創建空的向量庫）
     embeddings = get_embeddings()
     vectorstore = Chroma(
         persist_directory=CHROMA_PERSIST_DIR,
@@ -138,12 +156,27 @@ def process_and_store_document(content: str):
     # 添加到向量庫
     try:
         embeddings = get_embeddings()
+        
+        # 創建向量庫並確保所有文件都有正確的權限
         vectorstore = Chroma.from_texts(
             texts=texts,
             embedding=embeddings,
             persist_directory=CHROMA_PERSIST_DIR,
             collection_name=COLLECTION_NAME
         )
+        
+        # 確保所有創建的文件都有寫入權限
+        try:
+            import stat
+            if os.path.exists(CHROMA_PERSIST_DIR):
+                for root, dirs, files in os.walk(CHROMA_PERSIST_DIR):
+                    for d in dirs:
+                        os.chmod(os.path.join(root, d), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                    for f in files:
+                        os.chmod(os.path.join(root, f), stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH)
+        except Exception as e:
+            print(f"設置文件權限時發生錯誤（可能仍正常）：{e}")
+        
         # 確保持久化（如果方法存在）
         try:
             if hasattr(vectorstore, 'persist'):
@@ -161,18 +194,44 @@ def process_and_store_document(content: str):
             print(f"驗證向量庫時發生錯誤（但可能仍正常）：{e}")
             
     except Exception as e:
-        print(f"儲存文件到向量庫時發生錯誤：{e}")
-        # 如果是權限錯誤，提供更多信息
-        if "readonly" in str(e).lower() or "permission" in str(e).lower():
-            print(f"權限錯誤詳細信息：")
-            print(f"  目錄路徑：{CHROMA_PERSIST_DIR}")
-            print(f"  目錄存在：{os.path.exists(CHROMA_PERSIST_DIR)}")
-            if os.path.exists(CHROMA_PERSIST_DIR):
-                try:
-                    stat_info = os.stat(CHROMA_PERSIST_DIR)
-                    print(f"  目錄權限：{oct(stat_info.st_mode)}")
-                except:
-                    pass
+        error_msg = str(e)
+        print(f"儲存文件到向量庫時發生錯誤：{error_msg}")
+        
+        # 如果是權限錯誤，嘗試修復
+        if "readonly" in error_msg.lower() or "permission" in error_msg.lower():
+            print(f"檢測到權限錯誤，嘗試修復...")
+            try:
+                # 刪除目錄並重新創建
+                if os.path.exists(CHROMA_PERSIST_DIR):
+                    import stat
+                    def remove_readonly(func, path, exc):
+                        os.chmod(path, stat.S_IWRITE)
+                        func(path)
+                    shutil.rmtree(CHROMA_PERSIST_DIR, onerror=remove_readonly)
+                
+                ensure_chroma_directory()
+                
+                # 重試一次
+                print("重試儲存到向量庫...")
+                vectorstore = Chroma.from_texts(
+                    texts=texts,
+                    embedding=embeddings,
+                    persist_directory=CHROMA_PERSIST_DIR,
+                    collection_name=COLLECTION_NAME
+                )
+                print(f"重試成功：儲存 {len(texts)} 個文本塊到向量庫")
+                return
+            except Exception as e2:
+                print(f"修復權限錯誤失敗：{e2}")
+                print(f"權限錯誤詳細信息：")
+                print(f"  目錄路徑：{CHROMA_PERSIST_DIR}")
+                print(f"  目錄存在：{os.path.exists(CHROMA_PERSIST_DIR)}")
+                if os.path.exists(CHROMA_PERSIST_DIR):
+                    try:
+                        stat_info = os.stat(CHROMA_PERSIST_DIR)
+                        print(f"  目錄權限：{oct(stat_info.st_mode)}")
+                    except:
+                        pass
         raise
 
 def get_rag_chain():
