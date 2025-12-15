@@ -1,10 +1,15 @@
 """RAG 邏輯模組"""
+import os
+
+# 禁用 ChromaDB telemetry（在導入 ChromaDB 之前設置）
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_SERVER_NOFILE"] = "0"
+
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from backend.ollama_client import get_embeddings, get_llm
-import os
 import shutil
 
 # Chroma 持久化路徑
@@ -75,16 +80,32 @@ def process_and_store_document(content: str):
     
     # 如果沒有文本，返回
     if not texts:
+        print("警告：文本分割後為空")
         return
     
     # 添加到向量庫
-    embeddings = get_embeddings()
-    vectorstore = Chroma.from_texts(
-        texts=texts,
-        embedding=embeddings,
-        persist_directory=CHROMA_PERSIST_DIR,
-        collection_name=COLLECTION_NAME
-    )
+    try:
+        embeddings = get_embeddings()
+        vectorstore = Chroma.from_texts(
+            texts=texts,
+            embedding=embeddings,
+            persist_directory=CHROMA_PERSIST_DIR,
+            collection_name=COLLECTION_NAME
+        )
+        # 確保持久化
+        vectorstore.persist()
+        print(f"成功儲存 {len(texts)} 個文本塊到向量庫，持久化目錄：{CHROMA_PERSIST_DIR}")
+        
+        # 驗證儲存是否成功
+        try:
+            test_count = vectorstore._collection.count()
+            print(f"驗證：向量庫中實際文檔數量：{test_count}")
+        except Exception as e:
+            print(f"驗證向量庫時發生錯誤（但可能仍正常）：{e}")
+            
+    except Exception as e:
+        print(f"儲存文件到向量庫時發生錯誤：{e}")
+        raise
 
 def get_rag_chain():
     """獲取 RAG 鏈"""
@@ -95,13 +116,30 @@ def get_rag_chain():
     
     # 檢查向量庫是否為空
     try:
-        # 嘗試獲取一個樣本來檢查是否有數據
-        results = vectorstore.similarity_search("test", k=1)
-        if not results or len(results) == 0:
-            return None
+        # 方法1：嘗試直接訪問 collection 並檢查數量
+        try:
+            collection = vectorstore._collection
+            count = collection.count()
+            print(f"向量庫中文檔數量：{count}")
+            if count == 0:
+                return None
+        except AttributeError:
+            # 如果沒有 _collection 屬性，嘗試其他方法
+            print("無法訪問 _collection，嘗試其他檢查方法")
+            raise
+        
     except Exception as e:
-        # 如果出錯，可能表示向量庫為空或未初始化
-        return None
+        # 方法2：使用 similarity_search 檢查
+        try:
+            print(f"使用 similarity_search 檢查向量庫：{e}")
+            results = vectorstore.similarity_search("test", k=1)
+            print(f"similarity_search 返回結果數量：{len(results) if results else 0}")
+            if not results or len(results) == 0:
+                return None
+        except Exception as e2:
+            # 如果兩種方法都失敗，返回 None
+            print(f"檢查向量庫時發生錯誤：{e2}")
+            return None
     
     # 創建 Prompt 模板
     prompt_template = """你是一個友善的客服助手。請根據以下提供的上下文資訊回答用戶的問題。

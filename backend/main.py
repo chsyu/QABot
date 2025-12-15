@@ -1,4 +1,10 @@
 """FastAPI 主應用"""
+import os
+
+# 禁用 ChromaDB telemetry（在導入 ChromaDB 之前設置）
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_SERVER_NOFILE"] = "0"
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -7,7 +13,6 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 import uuid
-import os
 
 from backend.database import get_db, init_db
 from backend.models import Document, ChatHistory
@@ -79,14 +84,21 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         db.commit()
         
         # 處理並儲存到向量庫
-        process_and_store_document(content_str)
+        try:
+            process_and_store_document(content_str)
+        except Exception as e:
+            print(f"處理文件到向量庫時發生錯誤：{e}")
+            raise HTTPException(status_code=500, detail=f"處理文件到向量庫失敗：{str(e)}")
         
         return {
             "message": "文件上傳成功",
             "filename": file.filename,
             "size": len(content_str)
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"文件上傳時發生未預期的錯誤：{e}")
         raise HTTPException(status_code=500, detail=f"文件上傳失敗：{str(e)}")
 
 @app.post("/chat", response_model=ChatResponse)
