@@ -234,16 +234,68 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 - 確保 `chroma_db` 目錄有寫入權限
 - 如果出現權限問題，可以刪除 `chroma_db` 目錄讓系統重新建立
 
-## 📝 API 端點說明
+## 📝 FastAPI API 文檔
 
-### POST `/upload`
-上傳文字檔案（.txt）到系統
+### 自動生成的交互式文檔
 
-**請求**:
-- Content-Type: `multipart/form-data`
-- Body: `file` (檔案)
+FastAPI 自動生成互動式 API 文檔，啟動後端伺服器後，您可以透過以下網址訪問：
 
-**回應**:
+- **Swagger UI**（推薦）：http://localhost:8000/docs
+  - 提供完整的 API 端點列表
+  - 可以直接在瀏覽器中測試 API
+  - 顯示請求/響應範例和數據模型
+
+- **ReDoc**：http://localhost:8000/redoc
+  - 提供更美觀的文檔閱讀介面
+  - 適合查看完整的 API 規範
+
+### API 基礎 URL
+
+預設 API 基礎位址：`http://localhost:8000`
+
+### 端點列表
+
+#### 1. GET `/` - 健康檢查
+
+檢查 API 服務是否正常運行。
+
+**請求範例**:
+```bash
+curl http://localhost:8000/
+```
+
+**成功響應** (200 OK):
+```json
+{
+  "message": "客服聊天機器人 API",
+  "status": "running"
+}
+```
+
+---
+
+#### 2. POST `/upload` - 上傳文件
+
+上傳文字檔案（.txt）到系統，系統會自動處理並建立向量索引。
+
+**端點**: `/upload`
+
+**請求方法**: `POST`
+
+**Content-Type**: `multipart/form-data`
+
+**請求參數**:
+| 參數名 | 類型 | 必填 | 說明 |
+|--------|------|------|------|
+| file | File | 是 | 要上傳的文字檔案，僅支援 .txt 格式 |
+
+**請求範例**:
+```bash
+curl -X POST "http://localhost:8000/upload" \
+  -F "file=@test_data.txt"
+```
+
+**成功響應** (200 OK):
 ```json
 {
   "message": "文件上傳成功",
@@ -252,44 +304,250 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 }
 ```
 
-### POST `/chat`
-發送聊天訊息
+**錯誤響應**:
+- **400 Bad Request**: 檔案格式不正確
+  ```json
+  {
+    "detail": "只支援 .txt 格式的文件"
+  }
+  ```
 
-**請求**:
+- **500 Internal Server Error**: 處理文件到向量庫失敗
+  ```json
+  {
+    "detail": "處理文件到向量庫失敗：錯誤訊息"
+  }
+  ```
+
+**注意事項**:
+- 每次上傳新文件會清除舊的文件和向量索引
+- 上傳後需要等待系統處理完成（通常幾秒鐘）
+- 確保 Ollama 服務正在運行且模型已下載
+
+---
+
+#### 3. POST `/chat` - 發送聊天訊息
+
+向聊天機器人發送問題，系統會使用 RAG 技術根據上傳的資料回答。
+
+**端點**: `/chat`
+
+**請求方法**: `POST`
+
+**Content-Type**: `application/json`
+
+**請求體** (ChatMessage):
+| 欄位名 | 類型 | 必填 | 說明 |
+|--------|------|------|------|
+| message | string | 是 | 用戶的問題，不能為空 |
+
+**請求範例**:
+```bash
+curl -X POST "http://localhost:8000/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "退貨條件是什麼？"}'
+```
+
+**成功響應** (200 OK, ChatResponse):
 ```json
 {
-  "message": "您的問題"
+  "response": "商品需在收到後7天內申請退貨，商品需保持全新狀態，未使用、未拆封，需保留完整包裝和發票。",
+  "timestamp": "2024-01-01T12:00:00.123456"
 }
 ```
 
-**回應**:
-```json
-{
-  "response": "機器人的回答",
-  "timestamp": "2024-01-01T12:00:00"
-}
+**錯誤響應**:
+- **400 Bad Request**: 訊息為空
+  ```json
+  {
+    "detail": "訊息不能為空"
+  }
+  ```
+
+- **500 Internal Server Error**: 處理訊息時發生錯誤
+  ```json
+  {
+    "detail": "處理訊息時發生錯誤：錯誤訊息"
+  }
+  ```
+
+**注意事項**:
+- 如果尚未上傳文件，會返回提示訊息
+- 回答是基於已上傳的資料內容生成
+- 每次對話都會自動保存到聊天歷史
+
+---
+
+#### 4. GET `/history` - 獲取聊天歷史
+
+獲取所有聊天歷史記錄，按時間順序排列。
+
+**端點**: `/history`
+
+**請求方法**: `GET`
+
+**請求範例**:
+```bash
+curl http://localhost:8000/history
 ```
 
-### GET `/history`
-獲取聊天歷史記錄
-
-**回應**:
+**成功響應** (200 OK, HistoryResponse):
 ```json
 {
   "history": [
     {
       "id": 1,
       "timestamp": "2024-01-01T12:00:00",
-      "user_message": "問題",
-      "bot_response": "回答",
-      "session_id": "uuid"
+      "user_message": "退貨條件是什麼？",
+      "bot_response": "商品需在收到後7天內申請退貨...",
+      "session_id": "123e4567-e89b-12d3-a456-426614174000"
+    },
+    {
+      "id": 2,
+      "timestamp": "2024-01-01T12:05:00",
+      "user_message": "客服專線幾號？",
+      "bot_response": "客服專線：0800-123-456...",
+      "session_id": "123e4567-e89b-12d3-a456-426614174000"
     }
   ]
 }
 ```
 
-### DELETE `/history`
-清除所有聊天歷史記錄
+**空歷史響應** (200 OK):
+```json
+{
+  "history": []
+}
+```
+
+**錯誤響應**:
+- **500 Internal Server Error**: 獲取歷史記錄時發生錯誤
+  ```json
+  {
+    "detail": "獲取歷史記錄時發生錯誤：錯誤訊息"
+  }
+  ```
+
+**注意事項**:
+- 歷史記錄按時間戳記升序排列
+- 所有記錄屬於同一個 session_id（除非清除歷史）
+
+---
+
+#### 5. DELETE `/history` - 清除聊天歷史
+
+清除所有聊天歷史記錄，並生成新的 session ID。
+
+**端點**: `/history`
+
+**請求方法**: `DELETE`
+
+**請求範例**:
+```bash
+curl -X DELETE http://localhost:8000/history
+```
+
+**成功響應** (200 OK):
+```json
+{
+  "message": "聊天歷史已清除"
+}
+```
+
+**錯誤響應**:
+- **500 Internal Server Error**: 清除歷史記錄時發生錯誤
+  ```json
+  {
+    "detail": "清除歷史記錄時發生錯誤：錯誤訊息"
+  }
+  ```
+
+**注意事項**:
+- 此操作不可逆，請謹慎使用
+- 清除後會生成新的 session_id
+
+---
+
+### 錯誤處理
+
+所有 API 端點使用統一的錯誤處理機制：
+
+#### HTTP 狀態碼
+
+| 狀態碼 | 說明 |
+|--------|------|
+| 200 | 請求成功 |
+| 400 | 請求參數錯誤（例如：檔案格式不符、訊息為空） |
+| 500 | 伺服器內部錯誤 |
+
+#### 錯誤響應格式
+
+所有錯誤響應都遵循以下格式：
+
+```json
+{
+  "detail": "錯誤訊息說明"
+}
+```
+
+### CORS 配置
+
+API 已配置 CORS 中間件，允許所有來源訪問（`allow_origins=["*"]`）。這使得前端可以直接從瀏覽器呼叫 API，無需額外配置。
+
+### 測試 API
+
+#### 使用 cURL
+
+```bash
+# 健康檢查
+curl http://localhost:8000/
+
+# 上傳文件
+curl -X POST "http://localhost:8000/upload" -F "file=@test_data.txt"
+
+# 發送聊天訊息
+curl -X POST "http://localhost:8000/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "您的問題"}'
+
+# 獲取歷史記錄
+curl http://localhost:8000/history
+
+# 清除歷史記錄
+curl -X DELETE http://localhost:8000/history
+```
+
+#### 使用 Swagger UI（推薦）
+
+1. 啟動後端伺服器
+2. 在瀏覽器打開 http://localhost:8000/docs
+3. 點擊任意端點，展開詳細資訊
+4. 點擊 "Try it out" 按鈕
+5. 填入參數並點擊 "Execute"
+6. 查看響應結果
+
+#### 使用 Python requests
+
+```python
+import requests
+
+# 上傳文件
+with open('test_data.txt', 'rb') as f:
+    files = {'file': f}
+    response = requests.post('http://localhost:8000/upload', files=files)
+    print(response.json())
+
+# 發送聊天訊息
+response = requests.post(
+    'http://localhost:8000/chat',
+    json={'message': '退貨條件是什麼？'}
+)
+print(response.json())
+
+# 獲取歷史記錄
+response = requests.get('http://localhost:8000/history')
+print(response.json())
+```
 
 ## 🎓 使用範例
 
