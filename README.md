@@ -162,6 +162,7 @@ QABot/
 ├── test_data.txt           # 測試資料檔案
 ├── requirements.txt        # Python 依賴套件列表
 ├── Pipfile                 # pipenv 配置文件
+├── LICENSE                 # MIT 授權文件
 └── README.md               # 本文件
 ```
 
@@ -570,7 +571,11 @@ print(response.json())
 
 ## 📄 授權
 
-本專案僅供學習與測試使用。
+本專案採用 [MIT License](LICENSE) 授權。
+
+Copyright (c) 2024 QABot Contributors
+
+MIT License 允許您自由使用、修改、分發本專案，只需保留原始的版權聲明和許可證聲明。詳見 [LICENSE](LICENSE) 文件。
 
 ## 🤝 貢獻
 
